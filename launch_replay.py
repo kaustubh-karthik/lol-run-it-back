@@ -64,83 +64,32 @@ def open_league_client():
 async def watch_replay(connection, game_id):
     """Downloads and launches the replay for the given game_id."""
     try:
-        # First check if the game metadata is available
+        # Check if the game metadata is available first
         print(f"Checking metadata for game ID: {game_id}")
         metadata_endpoint = f'/lol-replays/v1/metadata/{game_id}'
         metadata_response = await connection.request('get', metadata_endpoint)
         
-        if not metadata_response.ok:
-            status = metadata_response.status
-            try:
-                error_data = await metadata_response.json()
-                print(f"Error getting replay metadata: HTTP {status} - {error_data}")
-            except:
-                print(f"Error getting replay metadata: HTTP {status}")
-            return False
+        if metadata_response.ok:
+            metadata = await metadata_response.json()
+            print(f"Initial metadata: {json.dumps(metadata, indent=2)}")
             
-        metadata = await metadata_response.json()
-        print(f"Initial metadata: {json.dumps(metadata, indent=2)}")
-        
-        # If the state is already 'watch', no need to download
-        if metadata.get('state') == 'watch':
-            print("Replay is already downloaded and ready to watch.")
+            # If the state is already 'watch', no need to download
+            if metadata.get('state') == 'watch':
+                print("Replay is already downloaded and ready to watch.")
+            else:
+                # Need to download the replay
+                await download_and_wait(connection, game_id)
         else:
-            print(f"Requesting download for game ID: {game_id}")
-            # Request download
-            download_endpoint = f'/lol-replays/v1/rofls/{game_id}/download'
-            download_response = await connection.request('post', download_endpoint, data={"componentServiceId": "string", "context": {}})
-            
-            if not download_response.ok:
-                status = download_response.status
-                try:
-                    error_data = await download_response.json()
-                    print(f"Error downloading replay: HTTP {status} - {error_data}")
-                except:
-                    print(f"Error downloading replay: HTTP {status}")
-                return False
-            
-            print("Waiting for download to complete...")
-            # Wait for download to finish
-            max_attempts = 60  # Cap the waiting at 30 seconds (60 * 0.5)
-            attempt = 0
-            
-            while attempt < max_attempts:
-                attempt += 1
-                metadata_response = await connection.request('get', metadata_endpoint)
-                if not metadata_response.ok:
-                    try:
-                        error_data = await metadata_response.json()
-                        print(f"Error checking replay status: {error_data}")
-                    except:
-                        print(f"Error checking replay status: HTTP {metadata_response.status}")
-                    return False
-                
-                metadata = await metadata_response.json()
-                state = metadata.get('state')
-                print(f"  Current state: {state}")
-                
-                if state == 'watch':
-                    print("Download complete.")
-                    break
-                elif state in ['checking', 'downloading']:
-                    await asyncio.sleep(0.5)
-                else:
-                    print(f"Unexpected replay state: {state}")
-                    print(f"Full metadata: {json.dumps(metadata, indent=2)}")
-                    if 'errorCode' in metadata:
-                        print(f"Error code: {metadata['errorCode']}")
-                    if 'errorString' in metadata:    
-                        print(f"Error string: {metadata['errorString']}")
-                    return False
-            
-            if attempt >= max_attempts:
-                print("Timed out waiting for the replay to download.")
-                return False
+            # Metadata not found, need to directly download the replay
+            status = metadata_response.status
+            print(f"Metadata not available (HTTP {status}), initiating download...")
+            await download_and_wait(connection, game_id)
 
         # Watch replay
         print(f"Launching replay for game ID: {game_id}")
         watch_endpoint = f'/lol-replays/v1/rofls/{game_id}/watch'
-        watch_response = await connection.request('post', watch_endpoint, data={"componentServiceId": "string", "context": {}})
+        # Include an empty contextData object in the request
+        watch_response = await connection.request('post', watch_endpoint, data={'contextData': {}})
         
         if watch_response.ok:
             print("Replay launched successfully!")
@@ -158,6 +107,65 @@ async def watch_replay(connection, game_id):
         import traceback
         traceback.print_exc()
         return False
+
+async def download_and_wait(connection, game_id):
+    """Download replay and wait for it to be ready"""
+    print(f"Requesting download for game ID: {game_id}")
+    # Request download
+    download_endpoint = f'/lol-replays/v1/rofls/{game_id}/download'
+    # Include an empty contextData object in the request
+    download_response = await connection.request('post', download_endpoint, data={'contextData': {}})
+    
+    if not download_response.ok:
+        status = download_response.status
+        try:
+            error_data = await download_response.json()
+            print(f"Error downloading replay: HTTP {status} - {error_data}")
+            return False
+        except:
+            print(f"Error downloading replay: HTTP {status}")
+            return False
+    
+    print("Waiting for download to complete...")
+    # Wait for download to finish
+    max_attempts = 120  # Cap the waiting at 60 seconds (120 * 0.5)
+    attempt = 0
+    
+    valid_states = ['checking', 'downloading']
+    finished_state = 'watch'
+    metadata_endpoint = f'/lol-replays/v1/metadata/{game_id}'
+    
+    while attempt < max_attempts:
+        attempt += 1
+        metadata_response = await connection.request('get', metadata_endpoint)
+        if not metadata_response.ok:
+            try:
+                error_data = await metadata_response.json()
+                print(f"Error checking replay status: {error_data}")
+            except:
+                print(f"Error checking replay status: HTTP {metadata_response.status}")
+            return False
+        
+        metadata = await metadata_response.json()
+        state = metadata.get('state')
+        print(f"  Current state: {state}")
+        
+        if state == finished_state:
+            print("Download complete.")
+            return True
+        elif state in valid_states:
+            await asyncio.sleep(0.5)
+        else:
+            print(f"Unexpected replay state: {state}")
+            print(f"Full metadata: {json.dumps(metadata, indent=2)}")
+            if 'errorCode' in metadata:
+                print(f"Error code: {metadata['errorCode']}")
+            if 'errorString' in metadata:    
+                print(f"Error string: {metadata['errorString']}")
+            return False
+    
+    print("Timed out waiting for the replay to download.")
+    return False
 
 @connector.ready
 async def connect(connection):
