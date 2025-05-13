@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>LoL - Run It Back!</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: white;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+    
+    #app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      width: 100%;
+    }
+
+    .run-it-back-app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      width: 100%;
+    }
+
+    img.logo {
+      width: 200px;
+      margin-bottom: 20px;
+    }
+
+    #container {
+      width: 200px;
+    }
+
+    h3 {
+      margin: 10px 0;
+    }
+
+    .status-closed, .status-error {
+      color: red;
+    }
+
+    .status-connecting, .status-opening {
+      color: orange;
+    }
+
+    .status-connected, .status-success {
+      color: green;
+    }
+
+    #watchReplayContainer {
+      display: flex;
+      flex-direction: column;
+    }
+
+    input, button {
+      margin-top: 12px;
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+
+    input {
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      padding: 10px;
+    }
+
+    button:hover {
+      background-color: #45a049;
+    }
+    
+    #statusMsg {
+      margin-top: 10px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="run-it-back-app">
+      <img class="logo" src="../static/logo.png" alt="LoL Run It Back Logo">
+      
+      <div id="container">
+        <h3>Client status: <span id="clientStatus" class="status-closed">closed</span></h3>
+        
+        <a href="#" id="reconnectBtn">Reconnect to client</a>
+        
+        <div id="watchReplayContainer">
+          <input type="text" id="gameIdInput" placeholder="Game ID">
+          <button id="watchBtn">Watch replay!</button>
+          
+          <span id="replayStatus" class="status-success"></span>
+          <div id="statusMsg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Import required modules using Electron's node integration
+    const { Client } = require('../main/models/league-client');
+    
+    // Create a client instance
+    let client = new Client();
+    let clientStatus = 'closed';
+    
+    // Update the UI based on client status
+    function updateClientStatus(status) {
+      console.log('Updating UI status to:', status);
+      clientStatus = status;
+      const statusElement = document.getElementById('clientStatus');
+      statusElement.textContent = status;
+      
+      // Remove all status classes
+      statusElement.classList.remove('status-closed', 'status-connecting', 'status-opening', 'status-connected');
+      
+      // Add appropriate status class
+      statusElement.classList.add(`status-${status}`);
+      
+      // Show/hide reconnect link
+      document.getElementById('reconnectBtn').style.display = 
+        status === 'connected' ? 'none' : 'inline';
+    }
+    
+    // Connect to the client
+    function connectToClient() {
+      console.log('Attempting to connect to client...');
+      
+      // Force a brand new client instance to avoid stale state
+      client = new Client();
+      
+      // Setup event listener for status changes
+      client.on('status-changed', (status) => {
+        console.log('Client status changed:', status);
+        updateClientStatus(status);
+      });
+      
+      // Try to connect
+      client.connect()
+        .then(() => {
+          console.log('Client connected successfully');
+          showStatusMessage('Connected to League client', 'success');
+        })
+        .catch(err => {
+          console.error('Error connecting to client:', err);
+          showStatusMessage('Error connecting to League client. Please open it manually.', 'error');
+        });
+    }
+    
+    // Watch a replay
+    async function watchReplay(gameId) {
+      // Validate game ID
+      if (!gameId || !/^\d+$/.test(gameId)) {
+        showStatusMessage('Please enter a valid Game ID, e.g. 294820618', 'error');
+        return;
+      }
+      
+      try {
+        // Check if client is connected first
+        if (clientStatus !== 'connected') {
+          console.log('Client not connected, attempting to connect...');
+          await client.connect();
+        }
+        
+        console.log(`Watching replay for Game ID: ${gameId}`);
+        showStatusMessage('Downloading replay... please wait', 'success');
+        await client.watchReplay(parseInt(gameId, 10));
+        showStatusMessage('Replay launched! Your replay should open any second', 'success');
+      } catch (error) {
+        console.error('Error watching replay:', error);
+        showStatusMessage(`Error downloading replay: ${error.message}`, 'error');
+      }
+    }
+    
+    // Helper to show status messages
+    function showStatusMessage(message, type = 'success') {
+      console.log(`Status message (${type}): ${message}`);
+      const statusMsg = document.getElementById('statusMsg');
+      statusMsg.textContent = message;
+      statusMsg.className = '';
+      statusMsg.classList.add(`status-${type}`);
+    }
+    
+    // Set up event listeners
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('Application loaded');
+      
+      // Initial status update
+      updateClientStatus(client.status);
+      
+      // Listen for client status changes
+      client.on('status-changed', (status) => {
+        console.log('Client status changed:', status);
+        updateClientStatus(status);
+      });
+      
+      // Reconnect button with direct event handler
+      const reconnectBtn = document.getElementById('reconnectBtn');
+      reconnectBtn.addEventListener('click', (e) => {
+        console.log('Reconnect button clicked');
+        e.preventDefault();
+        connectToClient();
+      });
+      
+      // Watch replay button
+      document.getElementById('watchBtn').addEventListener('click', () => {
+        const gameId = document.getElementById('gameIdInput').value;
+        watchReplay(gameId);
+      });
+    });
+  </script>
+</body>
+</html> 

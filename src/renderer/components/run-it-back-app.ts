@@ -22,6 +22,16 @@ export class RunItBackApp extends LitElement {
   @property({type: Number})
   gameId: number;
 
+  constructor() {
+    super();
+    console.log('RunItBackApp component created');
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    console.log('RunItBackApp connected to DOM');
+  }
+
   static get styles() {
     return css`
       :host {
@@ -57,8 +67,15 @@ export class RunItBackApp extends LitElement {
   }
 
   render() {
+    console.log('RunItBackApp render called');
+    console.log('Logo path:', getStatic('logo.png'));
+    
+    // Try to debug the image loading
+    const imgPath = getStatic('logo.png');
+    console.log('Using image path:', imgPath);
+    
     return html`
-      <img src="${getStatic('logo.png')}" />
+      <img src="${imgPath}" @error="${this._onImageError}" @load="${this._onImageLoad}" />
 
       <div id="container">
         <h3>Client status: <span class="status-${this.clientStatus}">${this.clientStatus}</span></h3>
@@ -73,6 +90,14 @@ export class RunItBackApp extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  _onImageError(e) {
+    console.error('Failed to load image:', e.target.src);
+  }
+
+  _onImageLoad(e) {
+    console.log('Image loaded successfully:', e.target.src);
   }
 
   protected updated(props: PropertyValues): void {

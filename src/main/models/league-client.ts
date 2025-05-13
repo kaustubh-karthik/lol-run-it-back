@@ -4,6 +4,8 @@ import LCUConnector from "lcu-connector";
 import {sleep} from "../utility/sleep";
 import cp from "child_process";
 import {EventEmitter} from 'events';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const agent = new https.Agent({
   rejectUnauthorized: false
@@ -25,28 +27,47 @@ export class Client extends EventEmitter {
   }
 
   async connect() {
+    console.log('Client.connect called, current status:', this.status);
+    
+    // If already connecting or connected, return the existing promise
+    if (this.status === 'connecting' || this.status === 'connected') {
+      console.log('Already connecting or connected, returning existing promise');
+      return this.connectPromise;
+    }
+    
+    // If we're closed, try to open the client first
     if (this.status === 'closed') {
       try {
+        console.log('Client closed, attempting to open it');
         await this.openClient();
-      }catch (e) {
+      } catch (e) {
+        console.error('Error opening client:', e);
         alert("Could not automatically open your client, please open the LoL Client manually");
       }
     }
 
-    if (this.connectPromise) {
-      return this.connectPromise;
-    }
+    // Clear any existing promise to allow reconnection attempts
+    this.connectPromise = null;
+    console.log('Setting up new connection promise');
 
     return this.connectPromise = new Promise((res, rej) => {
+      // Create a fresh connector
       const connector = new LCUConnector;
+      console.log('Created new LCU connector');
 
       connector.on('connect', data => {
+        console.log('LCU connector connected:', data);
         this.status = 'connected';
         res(data);
       });
 
-      connector.on('disconnect', () => this.status = 'closed');
+      connector.on('disconnect', () => {
+        console.log('LCU connector disconnected');
+        this.status = 'closed';
+        this.connectPromise = null; // Clear the promise on disconnect
+      });
 
+      console.log('Starting LCU connector');
       connector.start();
     });
   }
@@ -72,26 +93,84 @@ export class Client extends EventEmitter {
   }
 
   openClient() {
+    console.log('openClient called, setting status to opening');
     this.status = 'opening';
 
     return new Promise((res, rej) => {
-      let cmd;
-
       if (IS_MAC) {
-        cmd = "open '/Applications/League of Legends.app'";
-      } else {
-        cmd = '"C:\\Riot Games\\League of Legends\\LeagueClient.exe"';
-      }
-
-      cp.exec(cmd, (err) => {
-        if (err) {
-          this.status = 'closed';
-          rej('Error opening client from default path');
+        const macPath = '/Applications/League of Legends.app';
+        console.log(`Checking for Mac client at: ${macPath}`);
+        
+        if (fs.existsSync(macPath)) {
+          console.log('Mac client found, attempting to open');
+          cp.exec(`open '${macPath}'`, (err) => {
+            if (err) {
+              console.error('Error opening Mac client:', err);
+              this.status = 'closed';
+              rej(`Error opening client from path: ${macPath}`);
+            } else {
+              console.log('Mac client launched successfully');
+              this.status = 'connecting';
+              res();
+            }
+          });
         } else {
-          this.status = 'connecting';
-          res();
+          console.error('Mac client not found at expected path');
+          this.status = 'closed';
+          rej('League of Legends client not found on the system');
         }
-      })
+      } else {
+        // Windows paths
+        const possiblePaths = [
+          "C:\\Riot Games\\League of Legends\\LeagueClient.exe",
+          "D:\\Riot Games\\League of Legends\\LeagueClient.exe",
+          "C:\\Program Files\\Riot Games\\League of Legends\\LeagueClient.exe",
+          "C:\\Program Files (x86)\\Riot Games\\League of Legends\\LeagueClient.exe"
+        ];
+        
+        // Log all path checks
+        console.log("Checking for League client at the following paths:");
+        possiblePaths.forEach(p => {
+          const exists = fs.existsSync(p);
+          console.log(`- ${p}: ${exists ? 'FOUND' : 'NOT FOUND'}`);
+        });
+        
+        // Check if client is already running
+        this.isClientRunning().then(isRunning => {
+          if (isRunning) {
+            console.log('Client is already running, skipping launch');
+            this.status = 'connecting';
+            res();
+            return;
+          }
+          
+          // Find the first path that exists
+          const existingPath = possiblePaths.find(clientPath => fs.existsSync(clientPath));
+          
+          if (existingPath) {
+            console.log(`Found League client at: ${existingPath}, launching...`);
+            cp.exec(`"${existingPath}"`, (err) => {
+              if (err) {
+                console.error(`Error launching from path ${existingPath}:`, err);
+                this.status = 'closed';
+                rej(`Error opening client from path: ${existingPath}`);
+              } else {
+                console.log('League client launch initiated');
+                this.status = 'connecting';
+                res();
+              }
+            });
+          } else {
+            console.error('League client not found in any default locations');
+            this.status = 'closed';
+            rej('League of Legends client not found in any of the default locations');
+          }
+        }).catch(err => {
+          console.error('Error checking if client is running:', err);
+          this.status = 'closed';
+          rej(`Error checking client status: ${err.message}`);
+        });
+      }
     });
   }
 
